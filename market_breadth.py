@@ -60,7 +60,7 @@ except Exception as e:
     print(f"Error reading {INPUT_FILE}: {e}")
     exit()
 
-print(f"Fetching 1-year history for {len(symbols)} stocks. This will take ~5 minutes...")
+print(f"Fetching 1-year history for {len(symbols)} stocks. This will take ~10-15 minutes...")
 raw_data_rows = []
 
 for i, symbol in enumerate(symbols):
@@ -72,24 +72,41 @@ for i, symbol in enumerate(symbols):
         "interval": INTERVAL, "fromdate": FROM_DATE, "todate": TO_DATE
     }
 
-    try:
-        hist_data = smartApi.getCandleData(historicParam)
-        if hist_data['status'] and hist_data['data']:
-            for row in hist_data['data']:
-                raw_data_rows.append({
-                    'Date': row[0][:10],
-                    'Symbol': symbol,
-                    'Close': row[4]
-                })
-    except Exception:
-        pass
-    
-    # Strict rate limit for Angel One API
-    time.sleep(0.4) 
+    # --- NEW: RETRY LOGIC FOR RATE LIMITS ---
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            hist_data = smartApi.getCandleData(historicParam)
+            
+            # If successful
+            if hist_data and hist_data.get('status') and hist_data.get('data'):
+                for row in hist_data['data']:
+                    raw_data_rows.append({
+                        'Date': row[0][:10],
+                        'Symbol': symbol,
+                        'Close': row[4]
+                    })
+                break # Break out of the retry loop, move to next stock
+            
+            # If we hit the rate limit specifically
+            elif hist_data and hist_data.get('errorcode') == 'AB1004':
+                print(f"Rate limited on {symbol}. Cooling down for 3 seconds... (Attempt {attempt+1}/{max_retries})")
+                time.sleep(3) # Wait longer before retrying
+            
+            # If it's some other API error (like invalid token), just skip
+            else:
+                break 
+
+        except Exception as e:
+            # Handle network disconnects or timeouts
+            print(f"Network error on {symbol}: {e}. Retrying...")
+            time.sleep(2)
+            
+    # Base rate limit delay (1 second is much safer for 750 stocks)
+    time.sleep(1) 
     
     if (i + 1) % 50 == 0:
         print(f"Processed {i + 1} / {len(symbols)} stocks...")
-
 # ==========================================
 # 4. CALCULATE METRICS FOR ENTIRE UNIVERSE
 # ==========================================
